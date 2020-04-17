@@ -182,7 +182,14 @@ namespace RESTFunctions.Controllers
             var tenants = await GetTenantsForUser(userId);
             if ((tenants == null) || (tenants.Count() == 0))
                 return BadRequest(new { userMessage = "No tenants found", status = 400, version = "1.0" });
-            return new JsonResult(tenants.First());
+            var tenant = tenants.First();
+            return new JsonResult(new
+            {
+                tenant.tenantId,
+                name = tenant.tenantName,
+                tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
+                allTenants = tenants.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
+            });
         }
 
         [HttpGet("getUserRoles")]
@@ -316,10 +323,10 @@ namespace RESTFunctions.Controllers
             if (tenant != null)
             {
                 return new JsonResult(new {
-                    tenantId = tenant.tenantId,
+                    tenant.tenantId,
                     name = tenant.tenantName,
-                    roles = tenant.roles.Aggregate((a, s) => $"{a},{s}"),
-                    allTenants = ts.Select(t => t.tenantName).Aggregate((a, s) => $"{a},{s}")
+                    tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
+                    allTenants = ts.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
                 });
             }
             return new NotFoundObjectResult(new { userMessage = "User is not a member of this tenant", status = 404, version = 1.0 });
