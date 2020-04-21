@@ -57,9 +57,10 @@ namespace RESTFunctions.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] TenantDef tenant)
         {
-            if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
+            _logger.LogDebug("Starting POST /tenant");
+            //if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             if ((string.IsNullOrEmpty(tenant.name) || (string.IsNullOrEmpty(tenant.ownerId))))
-                return BadRequest("Invalid parameters");
+                return BadRequest(new { userMessage = "Bad parameters", status = 409, version = 1.0 });
 
             var http = await _graph.GetClientAsync();
             try
@@ -67,13 +68,13 @@ namespace RESTFunctions.Controllers
                 await http.GetStringAsync($"{Graph.BaseUrl}users/{tenant.ownerId}");
             } catch (HttpRequestException ex)
             {
-                return BadRequest("Unable to validate user id");
+                return BadRequest(new { userMessage = "Bad user id", status = 409, version = 1.0 });
             }
             if ((tenant.name.Length > 60) || !Regex.IsMatch(tenant.name, "^[A-Za-z]\\w*$"))
-                return BadRequest("Invalid tenant name");
+                return BadRequest(new { userMessage = "Invalid tenant name", status = 409, version = 1.0 });
             var resp = await http.GetAsync($"{Graph.BaseUrl}groups?$filter=(displayName eq '{tenant.name}')");
             if (!resp.IsSuccessStatusCode)
-                return BadRequest("Unable to validate tenant existence");
+                return BadRequest(new { userMessage = "Unable to validate tenant existence", status = 409, version = 1.0 });
             var values = JObject.Parse(await resp.Content.ReadAsStringAsync())["value"].Value<JArray>();
             if (values.Count != 0)
                 return new ConflictObjectResult(new { userMessage = "Tenant already exists", status = 409, version = 1.0 });
