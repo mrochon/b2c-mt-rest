@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,10 +31,11 @@ namespace RESTFunctions.Controllers
         }
         Graph _graph;
 
-        [HttpGet("oauth2/{id}")]
+        [HttpGet("oauth2")]
         [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Get(string id)
+        public async Task<IActionResult> Get()
         {
+            var id = User.FindFirst("appTenantId").Value;
             Guid guid;
             if (!Guid.TryParse(id, out guid))
                 return BadRequest("Invalid id");
@@ -104,15 +106,17 @@ namespace RESTFunctions.Controllers
             return new OkObjectResult(new { id, roles = new string[] { "admin", "member" }, userMessage = "Tenant created" });
         }
         // POST api/values
-        [HttpPut("oauth2/{id}")]
+        [HttpPut("oauth2")]
         [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Put([FromRoute] Guid id, [FromBody] TenantDetails tenant)
+        public async Task<IActionResult> Put([FromBody] TenantDetails tenant)
         {
+            var tenantId = User.FindFirstValue("appTenantId");
+            if (tenantId == null) return null;
             if (string.IsNullOrEmpty(tenant.Name))
                 return BadRequest("Invalid parameters");
 
             var http = await _graph.GetClientAsync();
-            var groupUrl = $"{Graph.BaseUrl}groups/{id.ToString("D")}";
+            var groupUrl = $"{Graph.BaseUrl}groups/{tenantId}";
             var groupData = new
             {
                 description = tenant.LongName,
@@ -135,7 +139,7 @@ namespace RESTFunctions.Controllers
                     */
             if (!resp.IsSuccessStatusCode)
                 return BadRequest("Update failed");
-            return new OkObjectResult(new { id, name = tenant.Name });
+            return new OkObjectResult(new { tenantId, name = tenant.Name });
         }
 
         [HttpGet("forUser")]
@@ -225,21 +229,12 @@ namespace RESTFunctions.Controllers
                 roles = null;
             return roles;
         }
-        [Obsolete("Use GetMembers instead.", false)]
-        [Authorize(Roles = "admin")]
-        [HttpGet("members")]
-        public async Task<IActionResult> Members(string tenantName)
-        {
-            return await GetMembers(tenantName);
-        }
         [Authorize(Roles = "admin")]
         //[HttpGet("members/{tenantId}")] //TODO: tenantId may not go first as that would prevent ecluding this path from client cert requirement
-        [HttpGet("oauth2/{tenantId}/members")]
-        public async Task<IActionResult> GetMembers(string tenantId)
+        [HttpGet("oauth2/members")]
+        public async Task<IActionResult> GetMembers()
         {
-            Guid id;
-            if (!Guid.TryParse(tenantId, out id))
-                tenantId = await GetTenantIdFromNameAsync(tenantId);
+            var tenantId = User.FindFirstValue("appTenantId");
             if (tenantId == null) return null;
             var http = await _graph.GetClientAsync();
             var result = new List<Member>();
