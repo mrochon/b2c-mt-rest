@@ -58,6 +58,7 @@ namespace RESTFunctions.Services
                     Trace.WriteLine($"System exception: {ex.Message}");
                 }
             }
+            Trace.WriteLine($"Is authorized? {isAuthorized}");
             if (isAuthorized)
             {
                 context.User = new System.Security.Claims.ClaimsPrincipal(identity);
