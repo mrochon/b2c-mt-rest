@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Net.Http;
@@ -234,8 +235,10 @@ namespace RESTFunctions.Controllers
         [HttpGet("oauth2/members")]
         public async Task<IActionResult> GetMembers()
         {
+            Trace.WriteLine("Tenant:GetMembers")
             var tenantId = User.FindFirstValue("appTenantId");
             if (tenantId == null) return null;
+            Trace.WriteLine($"Tenant:GetMembers: {tenantId}");
             var http = await _graph.GetClientAsync();
             var result = new List<Member>();
             foreach (var role in new string[] { "admin", "member" })
