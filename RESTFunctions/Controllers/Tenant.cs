@@ -235,7 +235,7 @@ namespace RESTFunctions.Controllers
         [HttpGet("oauth2/members")]
         public async Task<IActionResult> GetMembers()
         {
-            Trace.WriteLine("Tenant:GetMembers")
+            Trace.WriteLine("Tenant:GetMembers");
             var tenantId = User.FindFirstValue("appTenantId");
             if (tenantId == null) return null;
             Trace.WriteLine($"Tenant:GetMembers: {tenantId}");
