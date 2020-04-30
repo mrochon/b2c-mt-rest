@@ -42,7 +42,7 @@ namespace RESTFunctions
             })
                 .AddJwtBearer(jwtOptions =>
                 {
-                    jwtOptions.MetadataAddress = $"{Configuration["B2C:Instance"]}/{Configuration["B2C:TenantId"]}/{Configuration["B2C:Policy"]}/v2.0/.well-known/openid-configuration";
+                    jwtOptions.MetadataAddress = $"https://{Configuration["B2C:TenantName"]}.b2clogin.com/{Configuration["B2C:TenantId"]}/{Configuration["B2C:Policy"]}/v2.0/.well-known/openid-configuration";
                     Trace.WriteLine($"Oauth2 metadata: {jwtOptions.MetadataAddress}");
                     //jwtOptions.Authority = $"https://login.microsoftonline.com/tfp/{Configuration["B2C:TenantId"]}/{Configuration["B2C:Policy"]}/v2.0/";
                     jwtOptions.Audience = Configuration["B2C:ClientId"];
@@ -51,6 +51,7 @@ namespace RESTFunctions
                         OnAuthenticationFailed = (ctx) =>
                         {
                             Trace.WriteLine($"Bearer token validation failed: {ctx.Exception.Message}");
+                            var addr = ctx.Options.MetadataAddress;
                             return Task.FromResult(0);
                         }
                     };
@@ -73,6 +74,7 @@ namespace RESTFunctions
             //other middleware
             app.UseCertificateValidator();
             app.UseAuthentication();
+            app.UseAuthorization();
             app.UseHttpsRedirection();
             //app.UseMvc();
 
