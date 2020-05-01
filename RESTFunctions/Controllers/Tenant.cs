@@ -24,13 +24,15 @@ namespace RESTFunctions.Controllers
     public class Tenant : ControllerBase
     {
         private readonly ILogger<Tenant> _logger;
-        public Tenant(Graph graph, ILogger<Tenant> logger)
+        public Tenant(Graph graph, ILogger<Tenant> logger, InvitationService inviter)
         {
             _graph = graph;
             _logger = logger;
             _logger.LogInformation("Tenant ctor");
+            _inviter = inviter;
         }
         Graph _graph;
+        InvitationService _inviter;
 
         [HttpGet("oauth2")]
         [Authorize(Roles = "admin")]
@@ -218,7 +220,12 @@ namespace RESTFunctions.Controllers
                 return BadRequest("Errors processing this request");
             }
         }
-
+        [HttpPost("oauth2/invite")]
+        [Authorize(Roles = "admin")]
+        public string Invite([FromBody] InvitationDetails invite)
+        {
+            return _inviter.GetInvitationUrl(User, invite);
+        }
         private async Task<IEnumerable<string>> GetUserRolesByIdAsync(string tenantId, string userId)
         {
             List<string> roles = new List<string>();
@@ -280,13 +287,11 @@ namespace RESTFunctions.Controllers
         // Used by IEF
         // add or confirm user is member, return roles
         [HttpPost("member")]
-        public async Task<IActionResult> Member([FromBody] TenantMember memb)
+        public async Task<IActionResult> Member([FromBody] TenantIdMember memb)
         {
-            _logger.LogTrace("Member: {0}", memb.tenantName);
+            _logger.LogTrace("Member: {0}", memb.tenantId);
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
-            _logger.LogTrace("Authorized");
-            var tenantName = memb.tenantName.ToUpper();
-            var tenantId = await GetTenantIdFromNameAsync(memb.tenantName);
+            var tenantId = memb.tenantId;
             _logger.LogTrace("Tenant id: {0}", tenantId);
             if (tenantId == null)
                 return new NotFoundObjectResult(new { userMessage = "Tenant does not exist", status = 404, version = 1.0 });
@@ -318,7 +323,7 @@ namespace RESTFunctions.Controllers
         {
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             var ts = await GetTenantsForUser(memb.userId);
-            var tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName.ToUpper());
+            var tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName);
             if (tenant != null)
             {
                 return new JsonResult(new {
@@ -331,27 +336,6 @@ namespace RESTFunctions.Controllers
             return new NotFoundObjectResult(new { userMessage = "User is not a member of this tenant", status = 404, version = 1.0 });
         }
 
-        [HttpGet("{tenantName}/invite")]
-        public IActionResult GetInviteToken(string tenantName, string email)
-        {
-            if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
-            const string issuer = "http://b2cmultitenant";
-            const string audience = "https://login.microsoftonline.com/mrochonb2cprod.onmicrosoft.com";
-
-            IList<System.Security.Claims.Claim> claims = new List<System.Security.Claims.Claim>();
-            claims.Add(new System.Security.Claims.Claim("appTenantId", tenantName));
-            claims.Add(new System.Security.Claims.Claim("email", email));
-
-            var securityKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(Encoding.UTF8.GetBytes("secret"));
-            var cred = new Microsoft.IdentityModel.Tokens.SigningCredentials(
-                securityKey,
-                SecurityAlgorithms.HmacSha256Signature);
-            var token = new JwtSecurityToken(issuer, audience, claims, DateTime.Now, DateTime.Now.AddDays(1), cred);
-            var jwtHandler = new JwtSecurityTokenHandler();
-            var jwt = jwtHandler.WriteToken(token);
-
-            return new ObjectResult(jwt);
-        }
         private async Task<string> GetTenantIdFromNameAsync(string tenantName)
         {
             var http = await _graph.GetClientAsync();
@@ -411,6 +395,11 @@ namespace RESTFunctions.Controllers
     public class TenantMember
     {
         public string tenantName { get; set; }
+        public string userId { get; set; }
+    }
+    public class TenantIdMember
+    {
+        public string tenantId { get; set; }
         public string userId { get; set; }
     }
     public class Member

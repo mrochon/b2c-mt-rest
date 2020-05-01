@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Mvc;
 using RESTFunctions.Services;
 using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
+using RESTFunctions.Models;
 
 namespace RESTFunctions
 {
@@ -35,7 +36,9 @@ namespace RESTFunctions
 
             services.Configure<ClientCertificateOptions>(Configuration.GetSection("AuthCert"));
             services.Configure<ConfidentialClientApplicationOptions>(Configuration.GetSection("ClientCreds"));
+            services.Configure<InvitationTokenOptions>(Configuration.GetSection("Invitation"));
             services.AddSingleton<Services.Graph>();
+            services.AddTransient<Services.InvitationService>();
             services.AddAuthentication(options =>
             {
                 options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
