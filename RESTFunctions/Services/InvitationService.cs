@@ -34,7 +34,7 @@ namespace RESTFunctions.Services
                     claims.Add(c.Key, c.Value);
             claims.Add("appTenantId", inviter.FindFirstValue("appTenantId"));
             var jwt = CreateJWTToken(invite.inviteEmail, domainName, domainName, _tokenOptions.CurrentValue.SigningKey, tokenOptions.ValidityMinutes, claims);
-            var url = $"https://{domainName}.b2clogin.com/{tenantId}/{tokenOptions.InvitationPolicy}/oauth2/v2.0/authorize?client_id={clientId}&login_hint={invite.inviteEmail}&response_mode=form_post&nonce=defaultNonce&redirect_uri={invite.postRedeemUrl}&scope=openid&response_type=id_token&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer&client_assertion={jwt}";
+            var url = $"https://{domainName}.b2clogin.com/{tenantId}/{tokenOptions.Policy}/oauth2/v2.0/authorize?client_id={clientId}&login_hint={invite.inviteEmail}&response_mode=form_post&nonce=defaultNonce&redirect_uri={invite.postRedeemUrl}&scope=openid&response_type=id_token&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer&client_assertion={jwt}";
             return url;
         }
         private string CreateJWTToken(string email, string issuer, string audience, string signingKey, int validityMinutes, IDictionary<string, string> userClaims = null)

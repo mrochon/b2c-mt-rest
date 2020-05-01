@@ -7,7 +7,7 @@ namespace RESTFunctions.Models
 {
     public class InvitationTokenOptions
     {
-        public string InvitationPolicy { get; set; }
+        public string Policy { get; set; }
         public string SigningKey { get; set; }
         public int ValidityMinutes { get; set; }
         public string RedeemReplyUrl { get; set; }
