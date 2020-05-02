@@ -237,7 +237,7 @@ namespace RESTFunctions.Controllers
                 roles = null;
             return roles;
         }
-        [Authorize(Roles = "admin")]
+        [Authorize]
         //[HttpGet("members/{tenantId}")] //TODO: tenantId may not go first as that would prevent ecluding this path from client cert requirement
         [HttpGet("oauth2/members")]
         public async Task<IActionResult> GetMembers()
@@ -293,16 +293,25 @@ namespace RESTFunctions.Controllers
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             var tenantId = memb.tenantId;
             _logger.LogTrace("Tenant id: {0}", tenantId);
-            if (tenantId == null)
+            if (String.IsNullOrEmpty(tenantId))
                 return new NotFoundObjectResult(new { userMessage = "Tenant does not exist", status = 404, version = 1.0 });
             var http = await _graph.GetClientAsync();
+            string appTenantName;
+            try
+            {
+                var json = await http.GetStringAsync($"{Graph.BaseUrl}groups/{tenantId}");
+                appTenantName = JObject.Parse(json).Value<string>("displayName");
+            } catch(Exception)
+            {
+                return new NotFoundObjectResult(new { userMessage = "Tenant does not exist", status = 404, version = 1.0 });
+            }
             if (await IsMemberAsync(tenantId, memb.userId, true)) // skip already an admin
             {
-                return new JsonResult(new { tenantId, roles = new string[] { "admin", "member" } });
+                return new JsonResult(new { tenantId, tenantName = appTenantName, roles = new string[] { "admin", "member" } });
             }
             else if (await IsMemberAsync(tenantId, memb.userId, false))
             {
-                return new JsonResult(new { tenantId, roles = new string[] { "member" } });
+                return new JsonResult(new { tenantId, tenantName = appTenantName, roles = new string[] { "member" } });
             }
             else
             {
@@ -314,7 +323,7 @@ namespace RESTFunctions.Controllers
                         "application/json"));
                 if (!resp.IsSuccessStatusCode)
                     return BadRequest("Add member failed");
-                return new JsonResult(new { tenantId, roles = new string[] { "member" }, isNewMember = true });
+                return new JsonResult(new { tenantId, tenantName = appTenantName, roles = new string[] { "member" }, isNewMember = true });
             }
         }
         // Used by IEF
