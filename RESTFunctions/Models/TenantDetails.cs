@@ -9,6 +9,7 @@ namespace RESTFunctions.Models
     {
         public string Name { get; set; }
         public string LongName { get; set; }
+        public bool requireMFA { get; set; }
         public bool IsAADTenant { get; set; }
         public string IdPDomainName { get; set; }
     }

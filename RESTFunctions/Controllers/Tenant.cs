@@ -47,11 +47,13 @@ namespace RESTFunctions.Controllers
             {
                 var json = await http.GetStringAsync($"{Graph.BaseUrl}groups/{id}");
                 var result = JObject.Parse(json);
-                return new JsonResult(new TenantDef()
+                var tenant = new TenantDef()
                 {
                     name = result["displayName"].Value<string>(),
-                    description = result["description"].Value<string>()
-                });
+                    description = result["description"].Value<string>(),
+                };
+                tenant.requireMFA = await IsMFARequired(id);
+                return new JsonResult(tenant);
             } catch (HttpRequestException)
             {
                 return NotFound();
@@ -142,6 +144,24 @@ namespace RESTFunctions.Controllers
                     */
             if (!resp.IsSuccessStatusCode)
                 return BadRequest("Update failed");
+            if (tenant.requireMFA)
+            {
+                req = new HttpRequestMessage(HttpMethod.Get, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions/MT.Props");
+                resp = await http.SendAsync(req);
+                if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    var body = "{\"@odata.type\": \"microsoft.graph.openTypeExtension\", \"extensionName\": \"MT.Props\", \"requireMFA\": true }";
+                    req = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions")
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json")
+                    };
+                    resp = await http.SendAsync(req);
+                }
+            } else
+            {
+                req = new HttpRequestMessage(HttpMethod.Delete, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions/MT.Props");
+                await http.SendAsync(req); /* ignore response, be optimistic! */
+            }
             return new OkObjectResult(new { tenantId, name = tenant.Name });
         }
 
@@ -196,6 +216,7 @@ namespace RESTFunctions.Controllers
                 tenant.tenantId,
                 name = tenant.tenantName,
                 tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
+                requireMFA = await IsMFARequired(tenant.tenantId),
                 allTenants = tenants.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
             });
         }
@@ -338,6 +359,7 @@ namespace RESTFunctions.Controllers
                 return new JsonResult(new {
                     tenant.tenantId,
                     name = tenant.tenantName,
+                    requireMFA = await IsMFARequired(tenant.tenantId),
                     tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
                     allTenants = ts.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
                 });
@@ -393,6 +415,24 @@ namespace RESTFunctions.Controllers
                 return null;
             }
         }
+        private async Task<bool> IsMFARequired(string id)
+        {
+            var http = await _graph.GetClientAsync();
+            var resp = await http.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{Graph.BaseUrl}groups/{id}/extensions/MT.Props/"));
+            if (resp.IsSuccessStatusCode)
+            {
+                var json = await resp.Content.ReadAsStringAsync();
+                var result = JObject.Parse(json);
+                try
+                {
+                    return result["requireMFA"].Value<bool>();
+                }
+                catch // we may not have all props when there are more custom props to deal with
+                {
+                }
+            }
+            return false;
+        }
     }
 
     public class TenantDef
@@ -400,6 +440,7 @@ namespace RESTFunctions.Controllers
         public string name { get; set; }
         public string description { get; set; }
         public string ownerId { get; set; }
+        public bool requireMFA { get; set; }
     }
     public class TenantMember
     {
