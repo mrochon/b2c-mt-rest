@@ -7,10 +7,14 @@ namespace RESTFunctions.Models
 {
     public class TenantDetails
     {
-        public string Name { get; set; }
-        public string LongName { get; set; }
-        public bool requireMFA { get; set; }
-        public bool IsAADTenant { get; set; }
-        public string IdPDomainName { get; set; }
+        public string id { get; set; }
+        public string name { get; set; }
+        public string description { get; set; }
+        public string ownerId { get; set; }
+        public bool? requireMFA { get; set; }
+        public string identityProvider { get; set; }
+        public string directoryId { get; set; }
+        public bool? allowSameIssuerMembers { get; set; }
+        public string allowSameIssuerMembersString { get; set; }
     }
 }

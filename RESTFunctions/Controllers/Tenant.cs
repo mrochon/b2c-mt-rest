@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RESTFunctions.Models;
 using RESTFunctions.Services;
@@ -24,15 +25,17 @@ namespace RESTFunctions.Controllers
     public class Tenant : ControllerBase
     {
         private readonly ILogger<Tenant> _logger;
-        public Tenant(Graph graph, ILogger<Tenant> logger, InvitationService inviter)
+        public Tenant(Graph graph, ILogger<Tenant> logger, InvitationService inviter, GraphOpenExtensions ext)
         {
             _graph = graph;
             _logger = logger;
             _logger.LogInformation("Tenant ctor");
             _inviter = inviter;
+            _ext = ext;
         }
         Graph _graph;
         InvitationService _inviter;
+        GraphOpenExtensions _ext;
 
         [HttpGet("oauth2")]
         [Authorize(Roles = "admin")]
@@ -47,12 +50,13 @@ namespace RESTFunctions.Controllers
             {
                 var json = await http.GetStringAsync($"{Graph.BaseUrl}groups/{id}");
                 var result = JObject.Parse(json);
-                var tenant = new TenantDef()
+                var tenant = new TenantDetails()
                 {
+                    id = id,
                     name = result["displayName"].Value<string>(),
                     description = result["description"].Value<string>(),
                 };
-                tenant.requireMFA = await IsMFARequired(id);
+                await _ext.GetAsync(tenant);
                 return new JsonResult(tenant);
             } catch (HttpRequestException)
             {
@@ -60,15 +64,14 @@ namespace RESTFunctions.Controllers
             }
         }
         // Used by IEF
-        // POST api/values
         [HttpPost]
-        public async Task<IActionResult> Post([FromBody] TenantDef tenant)
+        public async Task<IActionResult> Post([FromBody] TenantDetails tenant)
         {
             _logger.LogDebug("Starting POST /tenant");
-            //if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
+            if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             if ((string.IsNullOrEmpty(tenant.name) || (string.IsNullOrEmpty(tenant.ownerId))))
                 return BadRequest(new { userMessage = "Bad parameters", status = 409, version = 1.0 });
-
+            tenant.name = tenant.name.ToUpper();
             var http = await _graph.GetClientAsync();
             try
             {
@@ -89,7 +92,7 @@ namespace RESTFunctions.Controllers
             {
                 description = tenant.description,
                 mailNickname = tenant.name,
-                displayName = tenant.name.ToUpper(),
+                displayName = tenant.name,
                 groupTypes = new string[] { },
                 mailEnabled = false,
                 securityEnabled = true,
@@ -107,6 +110,11 @@ namespace RESTFunctions.Controllers
             var json = await resp.Content.ReadAsStringAsync();
             var newGroup = JObject.Parse(json);
             var id = newGroup["id"].Value<string>();
+            // Add extensions (open)
+            tenant.id = id;
+            tenant.allowSameIssuerMembers = (!String.IsNullOrEmpty(tenant.allowSameIssuerMembersString) && (String.Compare("allow", tenant.allowSameIssuerMembersString) == 0));
+            if (!(await _ext.CreateAsync(tenant)))
+                return BadRequest("Tenant extensions creation failed");
             // add this group to the user's tenant collection
             return new OkObjectResult(new { id, roles = new string[] { "admin", "member" }, userMessage = "Tenant created" });
         }
@@ -117,52 +125,27 @@ namespace RESTFunctions.Controllers
         {
             var tenantId = User.FindFirstValue("appTenantId");
             if (tenantId == null) return null;
-            if (string.IsNullOrEmpty(tenant.Name))
+            if (string.IsNullOrEmpty(tenant.name))
                 return BadRequest("Invalid parameters");
-
+            tenant.id = tenantId;
             var http = await _graph.GetClientAsync();
             var groupUrl = $"{Graph.BaseUrl}groups/{tenantId}";
             var groupData = new
             {
-                description = tenant.LongName,
-                mailNickname = tenant.Name,
-                displayName = tenant.Name.ToUpper()
+                description = tenant.description,
+                mailNickname = tenant.name,
+                displayName = tenant.name.ToUpper()
             };
             var req = new HttpRequestMessage(HttpMethod.Patch, groupUrl)
             {
                 Content = new StringContent(JObject.FromObject(groupData).ToString(), Encoding.UTF8, "application/json")
             };
             var resp = await http.SendAsync(req);
-            /*
-            var group = $"{{\"@odata.type\":\"microsoft.graph.openTypeExtension\",\"extensionName\":\"B2CMultiTenant\",\"isAADTenant\":{tenant.IsAADTenant},\"domain\":\"{tenant.IdPDomainName}\"}}";
-            await http.PostAsync(
-                $"{groupUrl}/extensions",
-                new StringContent(
-                    group,
-                    System.Text.Encoding.UTF8,
-                    "application/json"));
-                    */
             if (!resp.IsSuccessStatusCode)
                 return BadRequest("Update failed");
-            if (tenant.requireMFA)
-            {
-                req = new HttpRequestMessage(HttpMethod.Get, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions/MT.Props");
-                resp = await http.SendAsync(req);
-                if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
-                {
-                    var body = "{\"@odata.type\": \"microsoft.graph.openTypeExtension\", \"extensionName\": \"MT.Props\", \"requireMFA\": true }";
-                    req = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions")
-                    {
-                        Content = new StringContent(body, Encoding.UTF8, "application/json")
-                    };
-                    resp = await http.SendAsync(req);
-                }
-            } else
-            {
-                req = new HttpRequestMessage(HttpMethod.Delete, $"https://graph.microsoft.com/beta/groups/{tenantId}/extensions/MT.Props");
-                await http.SendAsync(req); /* ignore response, be optimistic! */
-            }
-            return new OkObjectResult(new { tenantId, name = tenant.Name });
+            if (!(await _ext.UpdateAsync(tenant)))
+                return BadRequest("Update of extension attributes failed");
+            return new OkObjectResult(new { tenantId, name = tenant.name });
         }
 
         [HttpGet("forUser")]
@@ -211,12 +194,13 @@ namespace RESTFunctions.Controllers
             if ((tenants == null) || (tenants.Count() == 0))
                 return BadRequest(new { userMessage = "No tenants found", status = 400, version = "1.0" });
             var tenant = tenants.First();
-            return new JsonResult(new
+            var t = await _ext.GetAsync(new TenantDetails() { id = tenant.tenantId });
+            return new JsonResult(new 
             {
                 tenant.tenantId,
                 name = tenant.tenantName,
                 tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
-                requireMFA = await IsMFARequired(tenant.tenantId),
+                requireMFA = t.requireMFA,
                 allTenants = tenants.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
             });
         }
@@ -356,13 +340,32 @@ namespace RESTFunctions.Controllers
             var tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName);
             if (tenant != null)
             {
+                var t = await _ext.GetAsync(new TenantDetails() { id = tenant.tenantId });
                 return new JsonResult(new {
                     tenant.tenantId,
                     name = tenant.tenantName,
-                    requireMFA = await IsMFARequired(tenant.tenantId),
+                    requireMFA = t.requireMFA,
                     tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
                     allTenants = ts.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
                 });
+            } else if (String.Equals("commonaad", memb.identityProvider)) // perhaps this tenant allows users from same directory as creator
+            {
+                var id = await GetTenantIdFromNameAsync(memb.tenantName);
+                if (!String.IsNullOrEmpty(id))
+                {
+                    var t = await _ext.GetAsync(new TenantDetails() { id = id });
+                    if (String.Equals(memb.directoryId, t.directoryId) && t.allowSameIssuerMembers.Value)
+                        return new JsonResult(new
+                        {
+                            id,
+                            name = memb.tenantName,
+                            requireMFA = t.requireMFA,
+                            roles = new string[] { "member" },
+                            allTenants = new string[] { memb.tenantName }
+                        });
+                    //TODO: consider adding the user as a meber in B2C
+                }
+
             }
             return new NotFoundObjectResult(new { userMessage = "User is not a member of this tenant", status = 404, version = 1.0 });
         }
@@ -415,37 +418,23 @@ namespace RESTFunctions.Controllers
                 return null;
             }
         }
-        private async Task<bool> IsMFARequired(string id)
-        {
-            var http = await _graph.GetClientAsync();
-            var resp = await http.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{Graph.BaseUrl}groups/{id}/extensions/MT.Props/"));
-            if (resp.IsSuccessStatusCode)
-            {
-                var json = await resp.Content.ReadAsStringAsync();
-                var result = JObject.Parse(json);
-                try
-                {
-                    return result["requireMFA"].Value<bool>();
-                }
-                catch // we may not have all props when there are more custom props to deal with
-                {
-                }
-            }
-            return false;
-        }
     }
 
-    public class TenantDef
+   /* public class TenantDef
     {
         public string name { get; set; }
         public string description { get; set; }
         public string ownerId { get; set; }
         public bool requireMFA { get; set; }
-    }
+        public string identityProvider { get; set; }
+        public string tenantId { get; set; }
+    } */
     public class TenantMember
     {
         public string tenantName { get; set; }
         public string userId { get; set; }
+        public string identityProvider { get; set; }
+        public string directoryId { get; set; }
     }
     public class TenantIdMember
     {

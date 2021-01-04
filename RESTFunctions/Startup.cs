@@ -39,6 +39,7 @@ namespace RESTFunctions
             services.Configure<InvitationTokenOptions>(Configuration.GetSection("Invitation"));
             services.AddSingleton<Services.Graph>();
             services.AddTransient<Services.InvitationService>();
+            services.AddTransient<Services.GraphOpenExtensions>();
             services.AddAuthentication(options =>
             {
                 options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
