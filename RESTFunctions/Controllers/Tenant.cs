@@ -116,6 +116,7 @@ namespace RESTFunctions.Controllers
             if (!(await _ext.CreateAsync(tenant)))
                 return BadRequest("Tenant extensions creation failed");
             // add this group to the user's tenant collection
+            _logger.LogInformation("Finishing Create tenant");
             return new OkObjectResult(new { id, roles = new string[] { "admin", "member" }, userMessage = "Tenant created" });
         }
         // POST api/values
@@ -189,6 +190,7 @@ namespace RESTFunctions.Controllers
         [HttpGet("first")]
         public async Task<IActionResult> FirstTenant(string userId)
         {
+            _logger.LogInformation("Starting FirstTenant");
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             var tenants = await GetTenantsForUser(userId);
             if ((tenants == null) || (tenants.Count() == 0))
@@ -203,6 +205,7 @@ namespace RESTFunctions.Controllers
                 requireMFA = t.requireMFA,
                 allTenants = tenants.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
             });
+            _logger.LogInformation("Ending FirstTenant");
         }
 
         [HttpGet("getUserRoles")]
@@ -336,8 +339,15 @@ namespace RESTFunctions.Controllers
         public async Task<IActionResult> ExistingMember([FromBody] TenantMember memb)
         {
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
-            var ts = await GetTenantsForUser(memb.userId);
-            var tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName);
+            
+            Member tenant = null;
+            IEnumerable<Member> ts = null;
+            if (!String.IsNullOrEmpty(memb.userId)) // for an AAD user new to B2C this could be empty
+            {
+                ts = await GetTenantsForUser(memb.userId);
+                if (ts != null)
+                    tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName);
+            }
             if (tenant != null)
             {
                 var t = await _ext.GetAsync(new TenantDetails() { id = tenant.tenantId });
@@ -361,11 +371,10 @@ namespace RESTFunctions.Controllers
                             name = memb.tenantName,
                             requireMFA = t.requireMFA,
                             roles = new string[] { "member" },
-                            allTenants = new string[] { memb.tenantName }
+                            allTenants = new string[] { memb.tenantName },
+                            newUser = String.IsNullOrEmpty(memb.userId)
                         });
-                    //TODO: consider adding the user as a meber in B2C
                 }
-
             }
             return new NotFoundObjectResult(new { userMessage = "User is not a member of this tenant", status = 404, version = 1.0 });
         }
