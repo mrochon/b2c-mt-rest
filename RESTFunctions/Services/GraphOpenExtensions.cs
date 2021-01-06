@@ -32,18 +32,23 @@ namespace RESTFunctions.Services
         }
         public async Task<TenantDetails> GetAsync(TenantDetails tenant)
         {
-            var http = await _graph.GetClientAsync();
-            var resp = await http.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{Graph.BaseUrl}groups/{tenant.id}/extensions/{propName}/"));
-            if (resp.IsSuccessStatusCode)
+            using (_logger.BeginScope("GraphExtensions:Get"))
             {
-                var json = await resp.Content.ReadAsStringAsync();
-                var result = JObject.Parse(json);
-                tenant.requireMFA = result["requireMFA"]?.Value<bool>();
-                tenant.identityProvider = result["identityProvider"]?.Value<string>();
-                tenant.directoryId = result["tenantId"]?.Value<string>();
-                tenant.allowSameIssuerMembers = result["allowSameIssuerMembers"]?.Value<bool>();
+                var http = await _graph.GetClientAsync();
+                var resp = await http.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{Graph.BaseUrl}groups/{tenant.id}/extensions/{propName}/"));
+                if (resp.IsSuccessStatusCode)
+                {
+                    var json = await resp.Content.ReadAsStringAsync();
+                    var result = JObject.Parse(json);
+                    tenant.identityProvider = result["identityProvider"]?.Value<string>();
+                    tenant.directoryId = result["tenantId"]?.Value<string>();
+                    if (result.ContainsKey("requireMFA"))
+                        tenant.requireMFA = result["requireMFA"].Value<bool>();
+                    if (result.ContainsKey("allowSameIssuerMembers"))
+                        tenant.allowSameIssuerMembers = result["allowSameIssuerMembers"].Value<bool>();
+                }
+                return tenant;
             }
-            return tenant;
         }
         public async Task<bool> UpdateAsync(TenantDetails tenant)
         {

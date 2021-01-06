@@ -11,10 +11,10 @@ namespace RESTFunctions.Models
         public string name { get; set; }
         public string description { get; set; }
         public string ownerId { get; set; }
-        public bool? requireMFA { get; set; }
+        public bool requireMFA { get; set; }
         public string identityProvider { get; set; }
         public string directoryId { get; set; }
-        public bool? allowSameIssuerMembers { get; set; }
+        public bool allowSameIssuerMembers { get; set; }
         public string allowSameIssuerMembersString { get; set; }
     }
 }
