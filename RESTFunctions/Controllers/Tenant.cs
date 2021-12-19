@@ -67,8 +67,9 @@ namespace RESTFunctions.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] TenantDetails tenant)
         {
-            _logger.LogDebug("Starting POST /tenant");
+            _logger.LogTrace("Starting POST /tenant");
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
+            _logger.LogTrace("Authorized");
             if ((string.IsNullOrEmpty(tenant.name) || (string.IsNullOrEmpty(tenant.ownerId))))
                 return BadRequest(new { userMessage = "Bad parameters", status = 409, version = 1.0 });
             tenant.name = tenant.name.ToUpper();
@@ -78,7 +79,7 @@ namespace RESTFunctions.Controllers
                 await http.GetStringAsync($"{Graph.BaseUrl}users/{tenant.ownerId}");
             } catch (HttpRequestException ex)
             {
-                return BadRequest(new { userMessage = "Bad user id", status = 409, version = 1.0 });
+                return BadRequest(new { userMessage = "Unknown user", status = 409, version = 1.0 });
             }
             if ((tenant.name.Length > 60) || !Regex.IsMatch(tenant.name, "^[A-Za-z]\\w*$"))
                 return BadRequest(new { userMessage = "Invalid tenant name", status = 409, version = 1.0 });
@@ -117,7 +118,14 @@ namespace RESTFunctions.Controllers
                 return BadRequest("Tenant extensions creation failed");
             // add this group to the user's tenant collection
             _logger.LogInformation("Finishing Create tenant");
-            return new OkObjectResult(new { id, roles = new string[] { "admin", "member" }, userMessage = "Tenant created" });
+            var allTenants = await GetTenantsForUser(tenant.ownerId);
+            return new OkObjectResult(new TenantUserResponse
+            { 
+                tenantId = tenant.id, 
+                tenantName = tenant.name,
+                roles = new string[] { "admin", "member" }, 
+                allTenants = allTenants.Select(t => t.tenantName)
+            });
         }
         // POST api/values
         [HttpPut("oauth2")]
@@ -261,10 +269,10 @@ namespace RESTFunctions.Controllers
         [HttpGet("oauth2/members")]
         public async Task<IActionResult> GetMembers()
         {
-            Trace.WriteLine("Tenant:GetMembers");
+            _logger.LogInformation("Tenant:GetMembers");
             var tenantId = User.FindFirstValue("appTenantId");
             if (tenantId == null) return null;
-            Trace.WriteLine($"Tenant:GetMembers: {tenantId}");
+            _logger.LogInformation($"Tenant:GetMembers: {tenantId}");
             var http = await _graph.GetClientAsync();
             var result = new List<Member>();
             foreach (var role in new string[] { "admin", "member" })
@@ -367,7 +375,8 @@ namespace RESTFunctions.Controllers
                     name = tenant.tenantName,
                     requireMFA = t.requireMFA,
                     tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
-                    allTenants = ts.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
+                    allTenants = ts.Select(t => t.tenantName),  // .Aggregate((a, s) => $"{a},{s}")
+                    newUser = false
                 });
             } else if (String.Equals("commonaad", memb.identityProvider)) // perhaps this tenant allows users from same directory as creator
             {
