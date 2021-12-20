@@ -354,8 +354,8 @@ namespace RESTFunctions.Controllers
             }
         }
         // Used by IEF
-        [HttpPost("currmember")]
-        public async Task<IActionResult> ExistingMember([FromBody] TenantMember memb)
+        [HttpPost("GetTenantsForUser")]
+        public async Task<IActionResult> GetTenantsForUser([FromBody] TenantMember memb)
         {
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
             
@@ -370,11 +370,11 @@ namespace RESTFunctions.Controllers
             if (tenant != null)
             {
                 var t = await _ext.GetAsync(new TenantDetails() { id = tenant.tenantId });
-                return new JsonResult(new {
-                    tenant.tenantId,
-                    name = tenant.tenantName,
+                return new JsonResult(new TenantUserResponse {
+                    tenantId = tenant.tenantId,
+                    tenantName = tenant.tenantName,
                     requireMFA = t.requireMFA,
-                    tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
+                    roles = tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
                     allTenants = ts.Select(t => t.tenantName),  // .Aggregate((a, s) => $"{a},{s}")
                     newUser = false
                 });
@@ -385,10 +385,10 @@ namespace RESTFunctions.Controllers
                 {
                     var t = await _ext.GetAsync(new TenantDetails() { id = id });
                     if (String.Equals(memb.directoryId, t.directoryId) && t.allowSameIssuerMembers)
-                        return new JsonResult(new
+                        return new JsonResult(new TenantUserResponse
                         {
-                            id,
-                            name = memb.tenantName,
+                            tenantId = id,
+                            tenantName = memb.tenantName,
                             requireMFA = t.requireMFA,
                             roles = new string[] { "member" },
                             allTenants = new string[] { memb.tenantName },
@@ -396,7 +396,10 @@ namespace RESTFunctions.Controllers
                         });
                 }
             }
-            return new NotFoundObjectResult(new { userMessage = "User is not a member of this tenant", status = 404, version = 1.0 });
+            return new NotFoundObjectResult(new ErrorMsg
+            { 
+                userMessage = "You are not a member of any tenant. Please either create a new tenant or obtain an invitation to an existing one."
+            }); // empty response
         }
 
         private async Task<string> GetTenantIdFromNameAsync(string tenantName)
