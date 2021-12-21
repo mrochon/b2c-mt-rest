@@ -354,18 +354,21 @@ namespace RESTFunctions.Controllers
             }
         }
         // Used by IEF
-        [HttpPost("GetTenantsForUser")]
-        public async Task<IActionResult> GetTenantsForUser([FromBody] TenantMember memb)
+        [HttpGet("GetTenantsForUser")]
+        //public async Task<IActionResult> GetTenantsForUser([FromBody] TenantMember memb)
+        public async Task<IActionResult> GetTenantsForUser([FromQuery] string userId, string tenantName = "", string identityProvider = "", string directoryId = "")
         {
+            _logger.LogInformation($"GetTenantsForUser: User id:{userId}, tenantName: {tenantName}");
             if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
-            
             Member tenant = null;
             IEnumerable<Member> ts = null;
-            if (!String.IsNullOrEmpty(memb.userId)) // for an AAD user new to B2C this could be empty
+            if (!String.IsNullOrEmpty(userId)) // for an AAD user new to B2C this could be empty
             {
-                ts = await GetTenantsForUser(memb.userId);
-                if (ts != null)
-                    tenant = ts.FirstOrDefault(t => t.tenantName == memb.tenantName);
+                ts = await GetTenantsForUser(userId);
+                if (String.IsNullOrEmpty(tenantName))
+                    tenant = ts.FirstOrDefault(t => t.tenantName == tenantName);
+                if (tenant == null)
+                    tenant = ts.FirstOrDefault();
             }
             if (tenant != null)
             {
@@ -378,21 +381,21 @@ namespace RESTFunctions.Controllers
                     allTenants = ts.Select(t => t.tenantName),  // .Aggregate((a, s) => $"{a},{s}")
                     newUser = false
                 });
-            } else if (String.Equals("commonaad", memb.identityProvider)) // perhaps this tenant allows users from same directory as creator
+            } else if (String.Equals("commonaad", identityProvider)) // perhaps this tenant allows users from same directory as creator
             {
-                var id = await GetTenantIdFromNameAsync(memb.tenantName);
+                var id = await GetTenantIdFromNameAsync(tenantName);
                 if (!String.IsNullOrEmpty(id))
                 {
                     var t = await _ext.GetAsync(new TenantDetails() { id = id });
-                    if (String.Equals(memb.directoryId, t.directoryId) && t.allowSameIssuerMembers)
+                    if (String.Equals(directoryId, t.directoryId) && t.allowSameIssuerMembers)
                         return new JsonResult(new TenantUserResponse
                         {
                             tenantId = id,
-                            tenantName = memb.tenantName,
+                            tenantName = tenantName,
                             requireMFA = t.requireMFA,
                             roles = new string[] { "member" },
-                            allTenants = new string[] { memb.tenantName },
-                            newUser = String.IsNullOrEmpty(memb.userId)
+                            allTenants = new string[] { tenantName },
+                            newUser = String.IsNullOrEmpty(userId)
                         });
                 }
             }
@@ -401,7 +404,29 @@ namespace RESTFunctions.Controllers
                 userMessage = "You are not a member of any tenant. Please either create a new tenant or obtain an invitation to an existing one."
             }); // empty response
         }
-
+        [HttpGet("IsSignupAllowed")]
+        public async Task<IActionResult> IsSignupAllowed([FromQuery] string appTenantName, string identityProvider = "", string directoryId = "")
+        {
+            _logger.LogInformation("IsSignupAllowed");
+            _logger.LogInformation($"appTenantname is null?{String.IsNullOrEmpty(appTenantName)}");
+            if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
+            bool isSignupAllowed = false;
+            if (!String.IsNullOrEmpty(appTenantName))
+            {
+                _logger.LogInformation($"Tenant: {appTenantName}, identityprovider: {identityProvider}, directoryId: {directoryId}");
+                var id = await GetTenantIdFromNameAsync(appTenantName);
+                if (!String.IsNullOrEmpty(id))
+                {
+                    var t = await _ext.GetAsync(new TenantDetails() { id = id });
+                    _logger.LogInformation($"Found: {t.allowSameIssuerMembers}, {t.identityProvider}, {t.directoryId}");
+                    isSignupAllowed = t.allowSameIssuerMembers 
+                        && (t.identityProvider == identityProvider)
+                        && (t.directoryId == directoryId);
+                }
+            }
+            _logger.LogInformation($"Result: {isSignupAllowed}");
+            return new JsonResult(new { isSignupAllowed });
+        }
         private async Task<string> GetTenantIdFromNameAsync(string tenantName)
         {
             var http = await _graph.GetClientAsync();
