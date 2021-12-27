@@ -7,9 +7,9 @@ namespace RESTFunctions.Models
 {
     public class InvitationTokenOptions
     {
-        public string Policy { get; set; }
-        public string SigningKey { get; set; }
-        public int ValidityMinutes { get; set; }
-        public string RedeemReplyUrl { get; set; }
+        public string Policy { get; set; }              // Name of IEF policy to invoke in the signing request
+        public string SigningKey { get; set; }          // symmetric signing key (same must be stored in PolicKeys)
+        public int ValidityHours { get; set; }          // How long must the invitation be valid for
+        public bool IncludeDomainHints { get; set; }    // include domain_hint and AAD-specific hint if email corresponds to existing AD tenant
     }
 }

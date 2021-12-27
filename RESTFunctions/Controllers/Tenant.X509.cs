@@ -20,9 +20,10 @@ using RESTFunctions.Services;
 
 namespace RESTFunctions.Controllers
 {
+    // This partial class defines methods invoked directly from B2C policies using a client certificate for authz
     [Route("[controller]")]
     [ApiController]
-    public class Tenant : ControllerBase
+    public partial class Tenant : ControllerBase
     {
         private readonly ILogger<Tenant> _logger;
         public Tenant(Graph graph, ILogger<Tenant> logger, InvitationService inviter, GraphOpenExtensions ext)
@@ -37,32 +38,7 @@ namespace RESTFunctions.Controllers
         InvitationService _inviter;
         GraphOpenExtensions _ext;
 
-        [HttpGet("oauth2")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Get()
-        {
-            var id = User.FindFirst("appTenantId").Value;
-            Guid guid;
-            if (!Guid.TryParse(id, out guid))
-                return BadRequest("Invalid id");
-            var http = await _graph.GetClientAsync();
-            try
-            {
-                var json = await http.GetStringAsync($"{Graph.BaseUrl}groups/{id}");
-                var result = JObject.Parse(json);
-                var tenant = new TenantDetails()
-                {
-                    id = id,
-                    name = result["displayName"].Value<string>(),
-                    description = result["description"].Value<string>(),
-                };
-                await _ext.GetAsync(tenant);
-                return new JsonResult(tenant);
-            } catch (HttpRequestException)
-            {
-                return NotFound();
-            }
-        }
+        
         // Used by IEF
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] TenantDetails tenant)
@@ -118,7 +94,7 @@ namespace RESTFunctions.Controllers
                 return BadRequest("Tenant extensions creation failed");
             // add this group to the user's tenant collection
             _logger.LogInformation("Finishing Create tenant");
-            var allTenants = await GetTenantsForUser(tenant.ownerId);
+            var allTenants = await GetTenantsForUserImpl(tenant.ownerId);
             return new OkObjectResult(new TenantUserResponse
             { 
                 tenantId = tenant.id, 
@@ -127,39 +103,6 @@ namespace RESTFunctions.Controllers
                 allTenants = allTenants.Select(t => t.tenantName)
             });
         }
-        // POST api/values
-        [HttpPut("oauth2")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Put([FromBody] TenantDetails tenant)
-        {
-            using (_logger.BeginScope("PUT tenant"))
-            {
-                var tenantId = User.FindFirstValue("appTenantId");
-                if (tenantId == null) return null;
-                if (string.IsNullOrEmpty(tenant.name))
-                    return BadRequest("Invalid parameters");
-                tenant.id = tenantId;
-                var http = await _graph.GetClientAsync();
-                var groupUrl = $"{Graph.BaseUrl}groups/{tenantId}";
-                var groupData = new
-                {
-                    description = tenant.description,
-                    mailNickname = tenant.name,
-                    displayName = tenant.name.ToUpper()
-                };
-                var req = new HttpRequestMessage(HttpMethod.Patch, groupUrl)
-                {
-                    Content = new StringContent(JObject.FromObject(groupData).ToString(), Encoding.UTF8, "application/json")
-                };
-                var resp = await http.SendAsync(req);
-                if (!resp.IsSuccessStatusCode)
-                    return BadRequest("Update failed");
-                if (!(await _ext.UpdateAsync(tenant)))
-                    return BadRequest("Update of extension attributes failed");
-                return new OkObjectResult(new { tenantId, name = tenant.name });
-            }
-        }
-
         [HttpGet("forUser")]
         public async Task<IActionResult> GetForUser(string userId)
         {
@@ -201,32 +144,6 @@ namespace RESTFunctions.Controllers
                 }
             }
         }
-        // IEF
-        // Returns the first tenant user is a member of, otherwise error
-        [HttpGet("first")]
-        public async Task<IActionResult> FirstTenant(string userId)
-        {
-            using (_logger.BeginScope("FirstTenant"))
-            {
-                _logger.LogInformation("Starting FirstTenant");
-                if ((User == null) || (!User.IsInRole("ief"))) return new UnauthorizedObjectResult("Unauthorized");
-                var tenants = await GetTenantsForUser(userId);
-                if ((tenants == null) || (tenants.Count() == 0))
-                    return BadRequest(new { userMessage = "No tenants found", status = 400, version = "1.0" });
-                _logger.LogInformation($"Found {tenants.Count()} tenants");
-                var tenant = tenants.First();
-                var t = await _ext.GetAsync(new TenantDetails() { id = tenant.tenantId });
-                return new JsonResult(new
-                {
-                    tenant.tenantId,
-                    name = tenant.tenantName,
-                    tenant.roles, // .Aggregate((a, s) => $"{a},{s}"),
-                    requireMFA = t.requireMFA,
-                    allTenants = tenants.Select(t => t.tenantName)  // .Aggregate((a, s) => $"{a},{s}")
-                });
-            }
-        }
-
         [HttpGet("getUserRoles")]
         public async Task<IActionResult> GetUserRolesByNameAsync(string tenantName, string userId)
         {
@@ -247,12 +164,6 @@ namespace RESTFunctions.Controllers
                 return BadRequest("Errors processing this request");
             }
         }
-        [HttpPost("oauth2/invite")]
-        [Authorize(Roles = "admin")]
-        public string Invite([FromBody] InvitationDetails invite)
-        {
-            return _inviter.GetInvitationUrl(User, invite);
-        }
         private async Task<IEnumerable<string>> GetUserRolesByIdAsync(string tenantId, string userId)
         {
             List<string> roles = new List<string>();
@@ -264,43 +175,6 @@ namespace RESTFunctions.Controllers
                 roles = null;
             return roles;
         }
-        [Authorize]
-        //[HttpGet("members/{tenantId}")] //TODO: tenantId may not go first as that would prevent ecluding this path from client cert requirement
-        [HttpGet("oauth2/members")]
-        public async Task<IActionResult> GetMembers()
-        {
-            _logger.LogInformation("Tenant:GetMembers");
-            var tenantId = User.FindFirstValue("appTenantId");
-            if (tenantId == null) return null;
-            _logger.LogInformation($"Tenant:GetMembers: {tenantId}");
-            var http = await _graph.GetClientAsync();
-            var result = new List<Member>();
-            foreach (var role in new string[] { "admin", "member" })
-            {
-                var entType = (role == "admin") ? "owners" : "members";
-                var json = await http.GetStringAsync($"{Graph.BaseUrl}groups/{tenantId}/{entType}");
-                foreach (var memb in JObject.Parse(json)["value"].Value<JArray>())
-                {
-                    var user = result.FirstOrDefault(m => m.userId == memb["id"].Value<string>());
-                    if (user != null) // already exists; can only be because already owner; add member role
-                        user.roles.Add("member");
-                    else
-                    {
-                        user = new Member()
-                        {
-                            tenantId = tenantId,
-                            userId = memb["id"].Value<string>(),
-                            roles = new List<string>() { role }
-                        };
-                        var userJson = await http.GetStringAsync($"{Graph.BaseUrl}users/{user.userId}?$select=displayName,identities");
-                        user.name = JObject.Parse(userJson)["displayName"].Value<string>();
-                        result.Add(user);
-                    }
-                }
-            }
-            return new JsonResult(result);
-        }
-
         private async Task<bool> IsMemberAsync(string tenantId, string userId, bool asAdmin = false)
         {
             var http = await _graph.GetClientAsync();
@@ -355,7 +229,6 @@ namespace RESTFunctions.Controllers
         }
         // Used by IEF
         [HttpGet("GetTenantsForUser")]
-        //public async Task<IActionResult> GetTenantsForUser([FromBody] TenantMember memb)
         public async Task<IActionResult> GetTenantsForUser([FromQuery] string userId, string tenantName = "", string identityProvider = "", string directoryId = "")
         {
             _logger.LogInformation($"GetTenantsForUser: User id:{userId}, tenantName: {tenantName}");
@@ -364,8 +237,8 @@ namespace RESTFunctions.Controllers
             IEnumerable<Member> ts = null;
             if (!String.IsNullOrEmpty(userId)) // for an AAD user new to B2C this could be empty
             {
-                ts = await GetTenantsForUser(userId);
-                if (String.IsNullOrEmpty(tenantName))
+                ts = await GetTenantsForUserImpl(userId);
+                if (!String.IsNullOrEmpty(tenantName))
                     tenant = ts.FirstOrDefault(t => t.tenantName == tenantName);
                 if (tenant == null)
                     tenant = ts.FirstOrDefault();
@@ -440,7 +313,7 @@ namespace RESTFunctions.Controllers
             }
             return null;
         }
-        private async Task<IEnumerable<Member>> GetTenantsForUser(string userId)
+        private async Task<IEnumerable<Member>> GetTenantsForUserImpl(string userId)
         {
             var result = new List<Member>();
             var http = await _graph.GetClientAsync();
